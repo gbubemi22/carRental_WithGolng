@@ -3,15 +3,21 @@ package controller
 import (
 	"context"
 	"errors"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/cloudinary/cloudinary-go"
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
+
+	"github.com/cloudinary/cloudinary-go/api/uploader"
 	"github.com/gbubemi22/go-rentals/database"
 	"github.com/gbubemi22/go-rentals/models"
-	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"log"
-	"net/http"
-	"time"
 )
 
 var carCollection *mongo.Collection = database.OpenCollection(database.Client, "car")
@@ -80,9 +86,8 @@ func CreateCar() gin.HandlerFunc {
 	}
 }
 
-
 // GetAllCar retrieves all cars from the car collection
-func GetAllCar() gin.HandlerFunc {
+func GetAllCars() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 
@@ -169,7 +174,6 @@ func UpdateCar() gin.HandlerFunc {
 	}
 }
 
-
 // DeleteCar deletes a car by its ID
 func DeleteCar() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -195,4 +199,118 @@ func DeleteCar() gin.HandlerFunc {
 	}
 }
 
+func UpdateCarImage() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 
+		// Get the car ID from the request parameters
+		carID := c.Param("id")
+
+		var car models.Car
+
+		// Retrieve the existing Car object from the database based on the car ID
+		err := carCollection.FindOne(ctx, bson.M{"_id": carID}).Decode(&car)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "car not found"})
+			cancel() // Cancel the context if car is not found
+			return
+		}
+
+		form, err := c.MultipartForm()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			cancel() // Cancel the context if there is an error
+			return
+		}
+
+		images := form.File["images"]
+
+		// Load Cloudinary credentials from .env file
+		err = godotenv.Load(".env")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load .env file"})
+			cancel() // Cancel the context if there is an error
+			return
+		}
+
+		cloudinaryCloudName := os.Getenv("CLOUD_NAME")
+		cloudinaryAPIKey := os.Getenv("API_KEY")
+		cloudinaryAPISecret := os.Getenv("API_SECRET")
+
+		// Set up Cloudinary SDK
+		cld, err := cloudinary.NewFromParams(cloudinaryCloudName, cloudinaryAPIKey, cloudinaryAPISecret)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to initialize Cloudinary"})
+			cancel() // Cancel the context if there is an error
+			return
+		}
+
+		var imageUrls []string
+
+		// Upload the images to Cloudinary
+		for _, image := range images {
+			// Open the image file
+			file, err := image.Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to open image file"})
+				cancel() // Cancel the context if there is an error
+				return
+			}
+			defer file.Close()
+
+			// Upload file to Cloudinary
+
+			uploadResult, err := cld.Upload.Upload(ctx, file, uploader.UploadParams{Folder: "upload_folder"})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to upload image to Cloudinary"})
+				cancel() // Cancel the context if there is an error
+				return
+			}
+
+			// Append the image URL to the imageUrls slice
+			imageUrls = append(imageUrls, uploadResult.SecureURL)
+		}
+
+		// Update the Car object with the image URLs
+		car.Image = imageUrls
+
+		// Set the updated timestamp
+		car.UpdatedAt = time.Now()
+
+		// Update the car in the car collection
+		_, err = carCollection.UpdateOne(ctx, bson.M{"_id": carID}, bson.M{"$set": car})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update car"})
+			cancel() // Cancel the context if there is an error
+			return
+		}
+
+		cancel() // Cancel the context at the end of the function
+		c.JSON(http.StatusOK, gin.H{"message": "car image updated successfully"})
+	}
+}
+
+func GetAllCarsByAgent() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		// Get the agent ID from the request parameters
+		agentID := c.Param("agentId")
+
+		// Retrieve cars from the database based on the agent ID
+		cursor, err := carCollection.Find(ctx, bson.M{"agentId": agentID})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch cars"})
+			return
+		}
+		defer cancel()
+
+		var cars []models.Car
+		if err := cursor.All(ctx, &cars); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch cars"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"data": cars})
+	}
+}

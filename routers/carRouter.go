@@ -6,8 +6,15 @@ import (
 )
 
 func CarRoutes(incomingRoutes *gin.Engine) {
-	carGroup := incomingRoutes.Group("/api/v1")
+	carGroup := incomingRoutes.Group("/api/v1/cars")
 	{
 		carGroup.POST("/", controller.CreateCar())
+		carGroup.GET("/", controller.GetAllCars())
+		carGroup.GET("/:id", controller.GetOneCar())
+		carGroup.PATCH("/:id", controller.UpdateCar())
+		carGroup.DELETE("/:id", controller.DeleteCar())
+		carGroup.POST("/:id/images", controller.UpdateCarImage())
+		carGroup.GET("/find/:agentId", controller.GetAllCarsByAgent())
+
 	}
 }
