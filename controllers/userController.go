@@ -72,6 +72,11 @@ func GetAllUsers() gin.HandlerFunc {
 		if err = result.All(ctx, &allUsers); err != nil {
 			log.Fatal(err)
 		}
+
+		if len(allUsers) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "No cars found"})
+			return
+		}
 		c.JSON(http.StatusOK, allUsers[0])
 
 	}

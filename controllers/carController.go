@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"github.com/cloudinary/cloudinary-go"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"github.com/cloudinary/cloudinary-go/api/uploader"
 	"github.com/gbubemi22/go-rentals/database"
 	"github.com/gbubemi22/go-rentals/models"
@@ -66,7 +67,9 @@ func CreateCar() gin.HandlerFunc {
 			// Create some extra details for the car object - createdAt, updatedAt, ID
 			car.CreatedAt = time.Now()
 			car.UpdatedAt = time.Now()
+
 			car.ID = primitive.NewObjectID()
+			car.CarID = car.ID.Hex()
 
 			// Insert the new car into the car collection
 			_, err := carCollection.InsertOne(ctx, car)
@@ -92,7 +95,7 @@ func GetAllCars() gin.HandlerFunc {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 
 		// Find all cars in the car collection
-		cursor, err := carCollection.Find(ctx, bson.M{})
+		result, err := carCollection.Find(context.TODO(), bson.M{})
 		defer cancel()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get cars"})
@@ -100,13 +103,15 @@ func GetAllCars() gin.HandlerFunc {
 		}
 
 		// Iterate over the cursor and collect the cars
-		var cars []models.Car
-		if err := cursor.All(ctx, &cars); err != nil {
+		var cars []bson.M
+
+		if err := result.All(ctx, &cars); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get cars"})
 			return
 		}
 
 		c.JSON(http.StatusOK, cars)
+		fmt.Println(cars)
 	}
 }
 
@@ -120,13 +125,10 @@ func GetOneCar() gin.HandlerFunc {
 
 		// Find the car by its ID in the car collection
 		var car models.Car
-		err := carCollection.FindOne(ctx, bson.M{"_id": carID}).Decode(&car)
+		err := carCollection.FindOne(ctx, bson.M{"car_id": carID}).Decode(&car)
 		defer cancel()
 		if err != nil {
-			if err == mongo.ErrNoDocuments {
-				c.JSON(http.StatusNotFound, gin.H{"error": "car not found"})
-				return
-			}
+
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get car"})
 			return
 		}
@@ -140,39 +142,70 @@ func UpdateCar() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 
-		// Get the car ID from the request parameters
-		carID := c.Param("id")
+		var car models.Car
 
-		var updateData bson.M
+		// Get the car ID from the request parameters
+		carID := c.Param("car_id")
 
 		// Convert the JSON data coming from the client to a map
-		if err := c.ShouldBindJSON(&updateData); err != nil {
+		if err := c.BindJSON(&car); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		// Set the updated timestamp
-		updateData["updatedAt"] = time.Now()
+		var updateObj primitive.D
 
-		// Create a bson.M for the update operation
-		updateFields := bson.M{"$set": updateData}
+		if car.CarName != nil {
+			updateObj = append(updateObj, bson.E{"carname", car.CarName})
+		}
 
-		// Update the car in the car collection
-		updateResult, err := carCollection.UpdateOne(ctx, bson.M{"_id": carID}, updateFields)
-		defer cancel()
+		if car.CarModel != nil {
+			updateObj = append(updateObj, bson.E{"carmodel", car.CarModel})
+		}
+
+		if car.CarBrand != nil {
+			updateObj = append(updateObj, bson.E{"carbrand", car.CarBrand})
+		}
+
+		if car.CarYear != nil {
+			updateObj = append(updateObj, bson.E{"carYear", car.CarYear})
+		}
+
+		if car.RentalPrice != nil {
+			updateObj = append(updateObj, bson.E{"rentalPrice", car.RentalPrice})
+		}
+
+		car.UpdatedAt = time.Now()
+		updateObj = append(updateObj, bson.E{"updatedAt", car.UpdatedAt})
+
+		upsert := false // Set to false to avoid creating a new car
+
+		filter := bson.M{"car_id": carID}
+
+		opt := options.UpdateOptions{
+			Upsert: &upsert,
+		}
+
+		result, err := carCollection.UpdateOne(
+			ctx,
+			filter,
+			bson.D{
+				{"$set", updateObj},
+			},
+			&opt,
+		)
+
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update car"})
+			msg := fmt.Sprint("car item update failed")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
 			return
 		}
+		defer cancel()
 
-		if updateResult.ModifiedCount == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "car not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "car updated successfully"})
+		c.JSON(http.StatusOK, result)
 	}
 }
+
 
 // DeleteCar deletes a car by its ID
 func DeleteCar() gin.HandlerFunc {
