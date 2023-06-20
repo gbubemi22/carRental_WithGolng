@@ -28,6 +28,7 @@ func main() {
 
 	routes.UserRoutes(router)
 	routes.AuthRoutes(router)
+	routes.CarRoutes(router)
 	router.NoRoute(middleware.NotFound())
 	//router.Use(middleware.ErrorHandlerMiddleware())
      

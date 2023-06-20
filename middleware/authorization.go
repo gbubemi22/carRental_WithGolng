@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/gbubemi22/go-rentals/models"
+	//"github.com/gbubemi22/go-rentals/models"
 	"net/http"
 )
 
